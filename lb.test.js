@@ -1,5 +1,7 @@
-import { test, describe } from "node:test";
+import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
+
 import {
   Backend,
   RoundRobin,
@@ -162,5 +164,61 @@ describe("LoadBalancer", () => {
     lb.mark(b1, false);
     lb.mark(b1, true);
     assert.equal(lb.pick(), b1);
+  });
+});
+
+// ===========================================================================
+// A real HTTP server on a random free port. Replies with its own name.
+function startBackend(name) {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(server.up ? 200 : 500);
+        return res.end("ok");
+      }
+      if (req.method === "POST") {
+        let body = "";
+        req.on("data", (c) => (body += c));
+        req.on("end", () => res.end(`${name}:${body}`));
+        return;
+      }
+      res.end(name);
+    });
+    server.up = true; // flip to false to make /health fail
+    server.listen(0, "127.0.0.1", () => resolve(server)); // port 0 = OS picks one
+  });
+}
+
+const closeServer = (s) =>
+  new Promise((r) => {
+    s.closeAllConnections?.();
+    s.close(() => r());
+  });
+
+async function get(port, path = "/") {
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+    headers: { connection: "close" },
+  });
+  return {
+    status: res.status,
+    body: await res.text(),
+    backend: res.headers.get("x-backend"),
+  };
+}
+
+async function waitFor(predicate, timeoutMs = 3000) {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+describe("fake backend", () => {
+  test("answers requests with its name", async () => {
+    const s = await startBackend("A");
+    const r = await get(s.address().port);
+    assert.equal(r.body, "A");
+    await closeServer(s);
   });
 });
