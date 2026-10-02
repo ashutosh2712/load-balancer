@@ -52,6 +52,21 @@ export class IPHash {
   }
 }
 
+// Smooth weighted round robin (nginx-style)
+// ---------- 4: WeightedRoundRobin ----------
+export class WeightedRoundRobin {
+  choose(backends) {
+    const total = backends.reduce((s, b) => s + b.weight, 0);
+    let best = null;
+    for (const b of backends) {
+      b.current += b.weight;
+      if (best === null || b.current > best.current) best = b;
+    }
+    best.current -= total;
+    return best;
+  }
+}
+
 // ---------- Step 3: LoadBalancer ----------
 // No locks needed: pick() is synchronous, and Node never interrupts sync code.
 export class LoadBalancer {

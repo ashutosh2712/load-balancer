@@ -7,6 +7,7 @@ import {
   NoHealthyBackend,
   LeastConnections,
   IPHash,
+  WeightedRoundRobin,
 } from "./lb.js";
 
 describe("Backend", () => {
@@ -84,6 +85,38 @@ describe("IPHash", () => {
   test("copes with a missing key", () => {
     const lb = new LoadBalancer([B(1), B(2)], new IPHash());
     assert.doesNotThrow(() => lb.pick());
+  });
+});
+
+describe("WeightedRoundRobin", () => {
+  test("respects weights over a full cycle", () => {
+    const lb = new LoadBalancer(
+      [B(1), B(2), B(3)].map((b, i) => ((b.weight = [5, 1, 1][i]), b)),
+      new WeightedRoundRobin(),
+    );
+    const counts = tally(Array.from({ length: 700 }, () => lb.pick().port));
+    assert.deepEqual(counts, { 1: 500, 2: 100, 3: 100 });
+  });
+
+  test("is smooth, not bursty", () => {
+    const bs = [B(1), B(2), B(3)];
+    [5, 1, 1].forEach((w, i) => (bs[i].weight = w));
+    const lb = new LoadBalancer(bs, new WeightedRoundRobin());
+    const seq = Array.from({ length: 7 }, () => lb.pick().port);
+    // the heavy backend must not take a long unbroken run
+    let longest = 1,
+      run = 1;
+    for (let i = 1; i < seq.length; i++) {
+      run = seq[i] === seq[i - 1] ? run + 1 : 1;
+      longest = Math.max(longest, run);
+    }
+    assert.ok(longest <= 2, `got ${seq.join(",")}`);
+  });
+
+  test("equal weights behave like round robin", () => {
+    const lb = new LoadBalancer([B(1), B(2), B(3)], new WeightedRoundRobin());
+    const counts = tally(Array.from({ length: 300 }, () => lb.pick().port));
+    assert.deepEqual(counts, { 1: 100, 2: 100, 3: 100 });
   });
 });
 
