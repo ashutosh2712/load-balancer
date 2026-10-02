@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 export class NoHealthyBackend extends Error {
   constructor() {
     super("no healthy backends available");
@@ -34,6 +36,19 @@ export class RoundRobin {
 export class LeastConnections {
   choose(backends) {
     return backends.reduce((a, b) => (b.active < a.active ? b : a));
+  }
+}
+
+// Sticky: same key -> same backend while the healthy pool is unchanged
+// ---------- 3: IPHash ----------
+export class IPHash {
+  choose(backends, key = "") {
+    const h = crypto
+      .createHash("md5")
+      .update(String(key))
+      .digest()
+      .readUInt32BE(0);
+    return backends[h % backends.length];
   }
 }
 

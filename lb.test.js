@@ -6,6 +6,7 @@ import {
   LoadBalancer,
   NoHealthyBackend,
   LeastConnections,
+  IPHash,
 } from "./lb.js";
 
 describe("Backend", () => {
@@ -63,6 +64,26 @@ describe("LeastConnections", () => {
     assert.equal(lb.pick(), b); // a:1 b:1
     lb.release(a); // a:0 b:1
     assert.equal(lb.pick(), a);
+  });
+});
+
+describe("IPHash", () => {
+  test("same key always maps to the same backend", () => {
+    const lb = new LoadBalancer([B(1), B(2), B(3)], new IPHash());
+    const first = lb.pick("10.0.0.7").port;
+    for (let i = 0; i < 20; i++) assert.equal(lb.pick("10.0.0.7").port, first);
+  });
+
+  test("different keys spread across backends", () => {
+    const lb = new LoadBalancer([B(1), B(2), B(3)], new IPHash());
+    const ports = new Set();
+    for (let i = 0; i < 100; i++) ports.add(lb.pick(`10.0.0.${i}`).port);
+    assert.equal(ports.size, 3);
+  });
+
+  test("copes with a missing key", () => {
+    const lb = new LoadBalancer([B(1), B(2)], new IPHash());
+    assert.doesNotThrow(() => lb.pick());
   });
 });
 
