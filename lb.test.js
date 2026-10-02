@@ -1,6 +1,12 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { Backend, RoundRobin, LoadBalancer, NoHealthyBackend } from "./lb.js";
+import {
+  Backend,
+  RoundRobin,
+  LoadBalancer,
+  NoHealthyBackend,
+  LeastConnections,
+} from "./lb.js";
 
 describe("Backend", () => {
   test("defaults", () => {
@@ -31,6 +37,32 @@ describe("RoundRobin", () => {
     const rr = new RoundRobin();
     const picks = [1, 2, 3, 4].map(() => rr.choose(backends).port);
     assert.deepEqual(picks, [1, 2, 1, 2]);
+  });
+});
+
+describe("LeastConnections", () => {
+  test("picks the backend with the fewest active requests", () => {
+    const [a, b, c] = [B(1), B(2), B(3)];
+    a.active = 5;
+    b.active = 0;
+    c.active = 3;
+    const lb = new LoadBalancer([a, b, c], new LeastConnections());
+    assert.equal(lb.pick(), b);
+  });
+
+  test("ties go to the first backend", () => {
+    const [a, b] = [B(1), B(2)];
+    const lb = new LoadBalancer([a, b], new LeastConnections());
+    assert.equal(lb.pick(), a);
+  });
+
+  test("balances itself as active counts change", () => {
+    const [a, b] = [B(1), B(2)];
+    const lb = new LoadBalancer([a, b], new LeastConnections());
+    assert.equal(lb.pick(), a); // a:1 b:0
+    assert.equal(lb.pick(), b); // a:1 b:1
+    lb.release(a); // a:0 b:1
+    assert.equal(lb.pick(), a);
   });
 });
 

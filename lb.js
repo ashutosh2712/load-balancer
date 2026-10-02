@@ -21,10 +21,19 @@ export class Backend {
 }
 
 // ---------- Strategies: receive HEALTHY backends only ----------
+
+// ---------- 1: RoundRobin ----------
 export class RoundRobin {
   #n = 0;
   choose(backends) {
     return backends[this.#n++ % backends.length];
+  }
+}
+
+// ---------- 2: LeastConnections ----------
+export class LeastConnections {
+  choose(backends) {
+    return backends.reduce((a, b) => (b.active < a.active ? b : a));
   }
 }
 
