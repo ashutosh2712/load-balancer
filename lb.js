@@ -91,6 +91,31 @@ export class LoadBalancer {
   mark(backend, healthy) {
     backend.healthy = healthy;
   }
+
+  // Active health checks: GET /health every interval; 200 = healthy.
+  // Checks every backend (including unhealthy ones) so recovery is automatic.
+  startHealthChecks({
+    intervalMs = 1000,
+    timeoutMs = 500,
+    path = "/health",
+  } = {}) {
+    const probe = async (b) => {
+      try {
+        const res = await fetch(`http://${b.addr}${path}`, {
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        await res.arrayBuffer(); // drain so the socket is freed
+        this.mark(b, res.ok);
+      } catch {
+        this.mark(b, false);
+      }
+    };
+    const timer = setInterval(() => {
+      this.backends.forEach(probe);
+    }, intervalMs);
+    timer.unref(); // don't keep the process alive just for this
+    return () => clearInterval(timer);
+  }
 }
 
 // ---------- Step 6/7: Reverse proxy ----------

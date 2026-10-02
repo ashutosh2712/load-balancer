@@ -269,4 +269,16 @@ describe("proxy", () => {
     await Promise.all(Array.from({ length: 50 }, () => get(port)));
     await waitFor(() => lb.backends.every((b) => b.active === 0));
   });
+
+  test("active health check ejects and restores a backend", async () => {
+    const stop = lb.startHealthChecks({ intervalMs: 100 });
+
+    backends[1].up = false; // /health now returns 500
+    await waitFor(() => lb.backends[1].healthy === false);
+
+    backends[1].up = true; // /health returns 200 again
+    await waitFor(() => lb.backends[1].healthy === true);
+
+    stop();
+  });
 });
