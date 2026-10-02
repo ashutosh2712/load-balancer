@@ -10,6 +10,7 @@ import {
   LeastConnections,
   IPHash,
   WeightedRoundRobin,
+  createProxy,
 } from "./lb.js";
 
 describe("Backend", () => {
@@ -220,5 +221,52 @@ describe("fake backend", () => {
     const r = await get(s.address().port);
     assert.equal(r.body, "A");
     await closeServer(s);
+  });
+});
+
+describe("proxy", () => {
+  let backends, lb, proxy, port;
+
+  beforeEach(async () => {
+    backends = await Promise.all(["A", "B", "C"].map(startBackend));
+    const pool = backends.map(
+      (s) => new Backend("127.0.0.1", s.address().port),
+    );
+    lb = new LoadBalancer(pool, new RoundRobin());
+    proxy = createProxy(lb);
+    await new Promise((r) => proxy.listen(0, "127.0.0.1", r));
+    port = proxy.address().port;
+  });
+
+  afterEach(async () => {
+    await closeServer(proxy);
+    await Promise.all(
+      backends.map((s) => (s.listening ? closeServer(s) : null)),
+    );
+  });
+
+  test("spreads traffic evenly", async () => {
+    const bodies = [];
+    for (let i = 0; i < 30; i++) bodies.push((await get(port)).body);
+    assert.deepEqual(tally(bodies), { A: 10, B: 10, C: 10 });
+  });
+
+  test("adds an x-backend header", async () => {
+    const r = await get(port);
+    assert.match(r.backend, /^127\.0\.0\.1:\d+$/);
+  });
+
+  test("forwards POST bodies", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      body: "hello",
+      headers: { connection: "close" },
+    });
+    assert.match(await res.text(), /^[ABC]:hello$/);
+  });
+
+  test("releases backends after requests finish", async () => {
+    await Promise.all(Array.from({ length: 50 }, () => get(port)));
+    await waitFor(() => lb.backends.every((b) => b.active === 0));
   });
 });
