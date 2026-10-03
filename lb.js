@@ -137,6 +137,8 @@ export function createProxy(
     // Only bodyless/idempotent requests are retried: a piped body can't be replayed.
     const maxAttempts = idempotent.has(req.method) ? retries + 1 : 1;
     let attempt = 0;
+    let current = null; // the in-flight attempt: { proxyReq, release }
+    let clientGone = false;
 
     const fail = (code, msg) => {
       if (res.headersSent) return res.destroy();
@@ -144,6 +146,14 @@ export function createProxy(
       res.end(msg);
     };
 
+    // Registered ONCE, outside the retry loop.
+    res.on("close", () => {
+      clientGone = true;
+      if (current) {
+        if (!res.writableFinished) current.proxyReq.destroy(); // stop wasted work
+        current.release();
+      }
+    });
     const tryNext = () => {
       attempt++;
       let backend;
@@ -178,6 +188,8 @@ export function createProxy(
         agent: false, // fresh connection per request: simple and shutdown-friendly
       });
 
+      current = { proxyReq, release };
+
       proxyReq.on("response", (proxyRes) => {
         const out = {};
         for (const [k, v] of Object.entries(proxyRes.headers)) {
@@ -205,10 +217,10 @@ export function createProxy(
       );
 
       // If the client goes away mid-request, abort upstream work too.
-      res.on("close", () => {
-        if (!res.writableFinished) proxyReq.destroy();
-        release();
-      });
+      //   res.on("close", () => {
+      //     if (!res.writableFinished) proxyReq.destroy();
+      //     release();
+      //   });
 
       // Idempotent requests are treated as bodyless: end immediately (this also
       // works on retries, where `req` has already been consumed). Others stream.

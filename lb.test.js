@@ -281,4 +281,47 @@ describe("proxy", () => {
 
     stop();
   });
+
+  test("fails over when a backend dies (clients see no errors)", async () => {
+    await closeServer(backends[0]); // kill A
+    const results = [];
+    for (let i = 0; i < 30; i++) results.push(await get(port));
+
+    assert.ok(results.every((r) => r.status === 200)); // no errors at all
+    assert.ok(!results.slice(3).some((r) => r.body === "A")); // A is ejected
+  });
+
+  test("returns 503 when all backends are down", async () => {
+    await Promise.all(backends.map(closeServer));
+    for (let i = 0; i < 5; i++) await get(port); // let it discover the failures
+    assert.equal((await get(port)).status, 503);
+  });
+
+  test("does not retry POST, but still ejects the dead backend", async () => {
+    await closeServer(backends[0]); // round robin hits A first
+    const post = () =>
+      fetch(`http://127.0.0.1:${port}/`, {
+        method: "POST",
+        body: "x",
+        headers: { connection: "close" },
+      });
+    assert.equal((await post()).status, 502); // one attempt, no replay
+    assert.equal((await post()).status, 200); // A is out, B answers
+  });
+
+  test("times out a backend that never answers", async () => {
+    const hang = http.createServer(() => {}); // accepts, never replies
+    await new Promise((r) => hang.listen(0, "127.0.0.1", r));
+    const lb2 = new LoadBalancer([
+      new Backend("127.0.0.1", hang.address().port),
+    ]);
+    const p2 = createProxy(lb2, { upstreamTimeoutMs: 200, retries: 0 });
+    await new Promise((r) => p2.listen(0, "127.0.0.1", r));
+
+    const r = await get(p2.address().port);
+    assert.equal(r.status, 502);
+
+    await closeServer(p2);
+    await closeServer(hang);
+  });
 });
